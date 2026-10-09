@@ -1,4 +1,4 @@
-Directoimport os, time, json, threading, requests
+import os, time, json, threading, requests
 from flask import Flask
 from datetime import datetime
 
@@ -41,10 +41,6 @@ def get_top_scan():
    if sym in ["BTC/USDT","ETH/USDT","SOL/USDT","XRP/USDT","BNB/USDT"]: continue
    try: vol=float(t['last'])*float(t['vol24h'])
    except: continue
-   change=float(t.get('sodUtc0') or 0) or float(t.get('volCcy24h') or 0)
-   # use last price change %
-   pct=float(t.get('sodUtc8') or t.get('last',0)) # fallback
-   # real % from open
    try:
     open_price=float(t['open24h'])
     last=float(t['last'])
@@ -59,7 +55,6 @@ def get_top_scan():
   return []
 
 def check_strategy(sym):
- # returns score if matches both TF
  try:
   inst=sym.replace("/","-")
   c5=get_candles(inst,"5m")
@@ -69,17 +64,14 @@ def check_strategy(sym):
   closes15=[float(x[4]) for x in c15]
   vols5=[float(x[5]) for x in c5]
   vols15=[float(x[5]) for x in c15]
-
   cc5=closes5[-2]; cc15=closes15[-2]
   e9_5=sum(closes5[-11:-2])/9; e21_5=sum(closes5[-23:-2])/21
   e9_15=sum(closes15[-11:-2])/9; e21_15=sum(closes15[-23:-2])/21
   rsi5=calc_rsi(closes5[:-1],14); rsi15=calc_rsi(closes15[:-1],14)
   vavg5=sum(vols5[-21:-1])/20; vavg15=sum(vols15[-21:-1])/20
   vr5=vols5[-2]/vavg5 if vavg5 else 0; vr15=vols15[-2]/vavg15 if vavg15 else 0
-
   cond5 = cc5 > e9_5 > e21_5 and rsi5 < 28 and vr5>1.0
   cond15 = cc15 > e9_15 > e21_15 and rsi15 < 28 and vr15>1.0
-
   if cond5 and cond15:
    score = 0
    if rsi5<25: score+=10
@@ -99,24 +91,19 @@ def loop():
    top=get_top_scan()
    if not top:
     time.sleep(30); continue
-
-   # 1. Send TOP5 Gainers
    msg=f"🔥 TOP5 OKX Gainers - {datetime.now().strftime('%H:%M:%S')}\n\n"
    for i,(sym,pct,vol,price) in enumerate(top[:5],1):
     msg+=f"{i}. {sym}: {price} ({pct:.2f}%)\n"
    tg(msg)
-
-   # 2. Check STRATEGY on top 40
    found=[]
    for sym,pct,vol,price in top:
     res=check_strategy(sym)
     time.sleep(0.4)
     if res:
      r5,r15,vr5,vr15,cc,sc=res
-     if sym not in seen or time.time()-seen[sym]>3600*2: # 2h cooldown
+     if sym not in seen or time.time()-seen[sym]>3600*2:
       found.append((sym,r5,r15,vr5,cc,sc,pct))
       seen[sym]=time.time()
-
    if found:
     found=sorted(found,key=lambda x:x[5],reverse=True)
     m=f"💎 STRATEGY MATCH ({len(found)}) - 5m+15m DIP\n\n"
@@ -125,12 +112,10 @@ def loop():
     tg(m)
    else:
     tg("⏳ Scan done: No strategy match this round (RSI<28 on both TF). Waiting 15m.")
-
   except Exception as e:
    print("loop err",e)
    tg(f"Error: {e}")
-
-  time.sleep(900) # 15 min
+  time.sleep(900)
 
 threading.Thread(target=loop,daemon=True).start()
 
