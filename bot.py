@@ -4,7 +4,6 @@ from datetime import datetime
 
 BOT_TOKEN=os.getenv("BOT_TOKEN","8656315835:AAF3SWSIaGo9JwGc7GkaoJKROZxGdC6s5L8")
 CHAT_ID=os.getenv("CHAT_ID","5042879835")
-
 app=Flask(__name__)
 
 def tg(m):
@@ -84,7 +83,7 @@ def check_strategy(sym):
  return None
 
 def loop():
- tg(f"🚀 BOT LIVE RENDER TOP5 + STRATEGY ✅\nScanning 40 coins\nRule: 5m & 15m > EMA9>EMA21 + RSI<28 + Vol>1x\n{datetime.now().strftime('%H:%M:%S')}")
+ tg(f"🚀 BOT LIVE 5MIN SCAN ✅\nScanning 40 coins\nRule: 5m & 15m > EMA9>EMA21 + RSI<28 + Vol>1x\n{datetime.now().strftime('%H:%M:%S')}")
  seen={}
  while True:
   try:
@@ -111,16 +110,16 @@ def loop():
      m+=f"✅ {sym}\n Price {cc} ({pct:+.1f}%)\n RSI 5m:{r5:.0f} 15m:{r15:.0f} V:{vr5:.1f}x Score:{sc}\n LONG now SL {cc*0.97:.4f} TP {cc*1.06:.4f}\n\n"
     tg(m)
    else:
-    tg("⏳ Scan done: No strategy match this round (RSI<28 on both TF). Waiting 15m.")
+    tg("⏳ Scan done: No strategy match this round. Waiting 5m.")
   except Exception as e:
    print("loop err",e)
    tg(f"Error: {e}")
-  time.sleep(900)
+  time.sleep(300)
 
 threading.Thread(target=loop,daemon=True).start()
 
 @app.route('/')
-def home(): return "OKX TOP5+STRATEGY LIVE"
+def home(): return "OKX TOP5+STRATEGY 5MIN LIVE"
 
 if __name__=="__main__":
  app.run(host="0.0.0.0",port=int(os.environ.get("PORT",10000)))
