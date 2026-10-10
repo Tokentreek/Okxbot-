@@ -6,7 +6,7 @@ import threading
 # --- RENDER WEB SERVER (REQUIRED) ---
 app = Flask(__name__)
 @app.route('/')
-def home(): return "Tokentrek V2 LIVE"
+def home(): return "Tokentrek V2.2 15m RSI30 LIVE"
 def run_web(): app.run(host='0.0.0.0', port=10000)
 threading.Thread(target=run_web, daemon=True).start()
 # ------------------------------------
@@ -14,21 +14,15 @@ threading.Thread(target=run_web, daemon=True).start()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5042879835")
 
-print(f"BOT TOKEN SET: {bool(TELEGRAM_BOT_TOKEN)}") # debug
-
 sent_coins = {}
-COOLDOWN = 3600
+COOLDOWN = 7200 # 2 hours - 15m signals rarer, hold longer
 
 def send_telegram(msg):
-    if not TELEGRAM_BOT_TOKEN:
-        print("ERROR: TELEGRAM_BOT_TOKEN not set in Render Environment!")
-        return
+    if not TELEGRAM_BOT_TOKEN: return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=10)
-        print(f"TG Response: {r.text}")
-    except Exception as e:
-        print(f"TG Error: {e}")
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=10)
+    except: pass
 
 def get_ema(prices, period):
     if len(prices) < period: return None
@@ -52,7 +46,7 @@ def get_rsi(prices, period=14):
     return 100 - (100 / (1 + rs))
 
 def scan():
-    print(f"[{datetime.now()}] Scanning TOP40...")
+    print(f"[{datetime.now()}] Scanning 15m TOP40 RSI<30...")
     try:
         tickers = requests.get("https://www.okx.com/api/v5/market/tickers?instType=SWAP", timeout=10).json()
         data = tickers.get("data", [])
@@ -67,7 +61,8 @@ def scan():
         if coin in sent_coins and time.time() - sent_coins[coin] < COOLDOWN:
             continue
         try:
-            kl = requests.get(f"https://www.okx.com/api/v5/market/candles?instId={instId}&bar=5m&limit=200", timeout=10).json()
+            # 15 MINUTE CANDLES - LESS NOISE
+            kl = requests.get(f"https://www.okx.com/api/v5/market/candles?instId={instId}&bar=15m&limit=200", timeout=10).json()
             candles = kl.get("data", [])
             if len(candles) < 200: continue
             candles.reverse()
@@ -81,18 +76,20 @@ def scan():
             ema200 = get_ema(closes, 200)
             if None in (ema20, ema50, ema200): continue
             trend_up = (close_now > ema200) and (ema20 > ema50)
-            if rsi < 40 and vol_ratio > 0.8 and trend_up:
+
+            # NEW ENTRY: 15m RSI below 30 + trend
+            if rsi < 30 and vol_ratio > 0.8 and trend_up:
                 sl = close_now * 0.97
-                tp = close_now * 1.15 if vol_ratio > 2.5 else close_now * 1.06
-                msg = f"🚀 TOKEN-TREK V2\nCoin: {coin} ({instId})\nPrice: {close_now:.6f}\nRSI: {rsi:.1f} Vol: {vol_ratio:.1f}x\nTrend: OK ✅\nSL: {sl:.6f} TP: {tp:.6f}"
+                tp = close_now * 1.10
+                msg = f"🚀 15m DIP ALERT\nCoin: {coin}\nPrice: {close_now:.6f}\nRSI(15m): {rsi:.1f} <30 🔥\nVol: {vol_ratio:.1f}x\nTrend: EMA20>50 + Price>EMA200 ✅\nSL: {sl:.6f} TP: {tp:.6f} (+10%)"
                 send_telegram(msg)
                 sent_coins[coin] = time.time()
-                print(f"ALERTED {coin} RSI {rsi:.1f}")
+                print(f"ALERTED {coin} RSI15m {rsi:.1f}")
         except Exception as e:
             print(f"Error {instId}: {e}"); continue
 
 if __name__ == "__main__":
-    send_telegram("✅ Tokentrek V2 FIXED - Flask + 200 candles - LIVE NOW")
+    send_telegram("✅ Tokentrek V2.2 LIVE - Now 15m RSI<30 + Trend Filter")
     while True:
         scan()
-        time.sleep(90)
+        time.sleep(180)
