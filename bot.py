@@ -1,111 +1,111 @@
-import requests, time, os
+import requests, time, os, numpy as np
 from datetime import datetime
 from flask import Flask
 import threading
 
 app = Flask(__name__)
 @app.route('/')
-def home(): return "Tokentrek TOP50 VOLUME GAINERS 15m LIVE"
+def home(): return "Long Sniper LIVE - Vik Edition"
 def run_web(): app.run(host='0.0.0.0', port=10000)
 threading.Thread(target=run_web, daemon=True).start()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5042879835")
+sent = {}
 
-sent_coins = {}
-COOLDOWN = 3600 # 1 hour
-
-def send_telegram(msg):
+def send(msg):
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=10)
-    except Exception as e:
-        print(f"TG error {e}")
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                      json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=10)
+    except: pass
+    print(msg)
 
-def get_ema(prices, period):
-    if len(prices) < period: return None
-    k = 2/(period+1)
-    ema = sum(prices[:period])/period
-    for price in prices[period:]:
-        ema = price*k + ema*(1-k)
-    return ema
+def sma(arr, p): return sum(arr[-p:])/p if len(arr)>=p else None
 
-def get_rsi(prices, period=14):
-    if len(prices) < period+1: return 100
-    gains, losses = [], []
-    for i in range(1, period+1):
-        diff = prices[-i] - prices[-i-1]
-        if diff>0: gains.append(diff)
-        else: losses.append(abs(diff))
-    ag=sum(gains)/period if gains else 0
-    al=sum(losses)/period if losses else 0.001
-    if al==0: return 100
-    rs=ag/al
-    return 100-(100/(1+rs))
+def bollinger(closes, p=20, dev=2):
+    if len(closes)<p: return None,None,None
+    mid=sma(closes,p)
+    std=np.std(closes[-p:])
+    return mid+dev*std, mid, mid-dev*std
+
+def rsi(prices, p=6):
+    if len(prices)<p+1: return 50
+    g=l=0
+    for i in range(1,p+1):
+        d=prices[-i]-prices[-i-1]
+        if d>0: g+=d
+        else: l+=abs(d)
+    if l==0: return 100
+    return 100-(100/(1+(g/p)/(l/p)))
+
+def skdj(closes, highs, lows, n=9, m1=3, m2=3):
+    if len(closes)<n+m1: return None,None
+    rsvs=[]
+    for i in range(len(closes)):
+        if i<n-1: rsvs.append(50)
+        else:
+            hh=max(highs[i-n+1:i+1]); ll=min(lows[i-n+1:i+1])
+            rsvs.append(50 if hh==ll else (closes[i]-ll)/(hh-ll)*100)
+    k=sma(rsvs,m1)
+    ks=[]
+    for i in range(len(rsvs)):
+        if i>=m1-1: ks.append(sma(rsvs[i-m1+1:i+1],m1))
+    d=sma(ks,m2) if len(ks)>=m2 else None
+    return k,d
 
 def scan():
-    print(f"[{datetime.now()}] Scanning TOP50 VOLUME GAINERS...")
     try:
-        tickers = requests.get("https://www.okx.com/api/v5/market/tickers?instType=SWAP", timeout=10).json()
-        data = tickers.get("data", [])
-        usdt = [x for x in data if "USDT" in x["instId"]]
+        all_t = requests.get("https://www.okx.com/api/v5/market/tickers?instType=SWAP", timeout=10).json()['data']
+        top50 = sorted([x for x in all_t if 'USDT' in x['instId'] and float(x.get('vol24h',0)or 0)>50000],
+                       key=lambda x: float(x.get('last',0)or 0)/float(x.get('open24h',1)or 1), reverse=True)[:50]
+    except: return
 
-        # TOP 50 VOLUME GAINERS - sort by vol24h descending
-        # Also sort by 24h % change to get pumpers
-        top50 = sorted(usdt, key=lambda x: float(x.get("vol24h",0) or 0), reverse=True)[:50]
-
-        print(f"Scanning: {[x['instId'].split('-')[0] for x in top50[:10]]}...")
-
-    except Exception as e:
-        print(f"Ticker error {e}"); return
-
-    for ticker in top50:
-        instId = ticker["instId"]
-        coin = instId.split("-")[0]
-
-        # Skip if alerted recently
-        if coin in sent_coins and time.time()-sent_coins[coin] < COOLDOWN:
-            continue
+    for t in top50:
+        inst=t['instId']; coin=inst.split('-')[0]
+        if coin in sent and time.time()-sent[coin]<7200: continue
 
         try:
-            kl = requests.get(f"https://www.okx.com/api/v5/market/candles?instId={instId}&bar=15m&limit=200", timeout=10).json()
-            candles = kl.get("data", [])
-            if len(candles)<200: continue
-            candles.reverse()
-            closes=[float(c[4]) for c in candles]
-            vols=[float(c[5]) for c in candles]
-            close_now=closes[-1]
-            rsi=get_rsi(closes)
-            vol_ratio=vols[-1]/(sum(vols[-21:-1])/20) if sum(vols[-21:-1])>0 else 0
-            ema20=get_ema(closes,20); ema50=get_ema(closes,50); ema200=get_ema(closes,200)
-            if None in (ema20,ema50,ema200): continue
+            for tf in ['15m','1h']:
+                kl = requests.get(f"https://www.okx.com/api/v5/market/candles?instId={inst}&bar={tf}&limit=100", timeout=8).json().get('data',[])
+                if len(kl)<50: continue
+                kl.reverse()
+                closes=[float(c[4]) for c in kl]; highs=[float(c[2]) for c in kl]; lows=[float(c[3]) for c in kl]; vols=[float(c[5]) for c in kl]
 
-            trend_up = (close_now>ema200) and (ema20>ema50)
-            price_change_24h = float(ticker.get("chg24h",0) or 0) * 100
+                ub,mid,lb = bollinger(closes,20,2)
+                r6 = rsi(closes,6)
+                k,d = skdj(closes,highs,lows,9,3,3)
+                if None in (lb,k,d): continue
 
-            # ENTRY: RSI<30 + Trend + Volume
-            if rsi < 30 and vol_ratio > 0.8 and trend_up:
-                sl=close_now*0.97; tp=close_now*1.12
-                msg = (
-                    f"🚀 TOP50 GAINER DIP\n"
-                    f"Coin: {coin} ({instId})\n"
-                    f"Price: {close_now:.6f}\n"
-                    f"24h Chg: {price_change_24h:.1f}%\n"
-                    f"RSI 15m: {rsi:.1f} <30 🔥\n"
-                    f"Vol: {vol_ratio:.1f}x\n"
-                    f"Trend: EMA20>50 + Price>EMA200 ✅\n"
-                    f"SL: {sl:.6f} (-3%)\n"
-                    f"TP: {tp:.6f} (+12%)"
-                )
-                send_telegram(msg)
-                sent_coins[coin]=time.time()
-                print(f"ALERTED {coin} RSI {rsi:.1f} Vol {vol_ratio:.1f}x 24h {price_change_24h:.1f}%")
+                curr_low=lows[-1]; curr_close=closes[-1]
+                vol_ratio = vols[-1]/(sum(vols[-21:-1])/20) if sum(vols[-21:-1])>0 else 0
 
-        except Exception as e:
-            print(f"Error {instId}: {e}"); continue
+                touch_lb = curr_low <= lb or curr_close <= lb*1.005
+                rsi_os = r6 < 30
+                k_os = k < 20
 
-if __name__ == "__main__":
-    send_telegram("✅ Tokentrek V2.3 LIVE - TOP50 Volume Gainers | 15m RSI<30")
+                if touch_lb and rsi_os and k_os:
+                    entry=curr_close
+                    sl=min(curr_low,lb)*0.985
+                    gain_mid=(mid-entry)/entry*100
+
+                    # YOUR CUSTOM MESSAGE
+                    msg = (
+                        f"Vik Long {coin}\n"
+                        f"\n"
+                        f"🎯 Long Sniper Found\n"
+                        f"Coin: {coin} ({inst}) TF:{tf}\n"
+                        f"Entry: {entry:.6f}\n"
+                        f"Low: {curr_low:.6f} | LB: {lb:.6f}\n"
+                        f"RSI6: {r6:.1f} | K:{k:.1f} D:{d:.1f} | Vol {vol_ratio:.1f}x\n"
+                        f"SL: {sl:.6f} | TP MID: {mid:.6f} (+{gain_mid:.1f}%) | TP UB: {ub:.6f}"
+                    )
+                    send(msg)
+                    sent[coin]=time.time()
+                    break
+        except: continue
+
+if __name__=="__main__":
+    send("Vik Long Sniper LIVE ✅\nScanning TOP50 Gainers - WLD 0.4586 setup\nBOLL LB + RSI6<30 + K<20")
     while True:
         scan()
-        time.sleep(120) # check every 2 min for 50 coins
+        time.sleep(30)
