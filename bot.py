@@ -2,16 +2,12 @@ import os, time, requests, threading
 from flask import Flask
 from datetime import datetime
 
-# --- FAKE WEB SERVER FOR RENDER ---
 app = Flask(__name__)
 @app.route('/')
-def home():
-    return "Tokentrek V2 LIVE - MERL alert worked!"
-def run_web():
-    app.run(host='0.0.0.0', port=10000)
+def home(): return "Tokentrek V2.1 LIVE"
+def run_web(): app.run(host='0.0.0.0', port=10000)
 threading.Thread(target=run_web, daemon=True).start()
 
-# --- YOUR BOT CONFIG ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5042879835")
 sent_coins = {}
@@ -19,9 +15,9 @@ COOLDOWN = 3600
 
 def send_tg(msg):
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=10)
-    except: pass
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                      json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=10)
+    except Exception as e: print(f"TG fail {e}")
 
 def get_ema(prices, period):
     if len(prices) < period: return None
@@ -46,13 +42,14 @@ def scan():
     try:
         tickers = requests.get("https://www.okx.com/api/v5/market/tickers?instType=SWAP", timeout=10).json().get("data",[])
         usdt = [x for x in tickers if "USDT" in x["instId"]]
-        top40 = sorted(usdt, key=lambda x: float(x.get("vol24h",0)), reverse=True)[:40]
+        top40 = sorted(usdt, key=lambda x: float(x.get("vol24h",0) or 0), reverse=True)[:40]
     except: return
 
     for t in top40:
         instId = t["instId"]
-        coin = instId.split("-")[0]
-        if coin in sent_coins and time.time()-sent_coins[coin] < COOLDOWN: continue
+        coin = instId.split("-")[0] # FIXED: one dash
+        if coin in sent_coins and time.time() - sent_coins[coin] < COOLDOWN:
+            continue
         try:
             kl = requests.get(f"https://www.okx.com/api/v5/market/candles?instId={instId}&bar=5m&limit=200", timeout=10).json().get("data",[])
             if len(kl)<60: continue
@@ -64,22 +61,23 @@ def scan():
             vol_ratio = vols[-1]/(sum(vols[-21:-1])/20) if sum(vols[-21:-1])>0 else 0
             ema20 = get_ema(closes,20)
             ema50 = get_ema(closes,50)
-            ema200 = get_ema(closes,200) if len(closes)>=200 else ema50
-            if not ema20 or not ema50 or not ema200: continue
+            ema200 = get_ema(closes,200)
+            if not ema20 or not ema50 or not ema200:
+                continue
             trend_up = (close_now > ema200) and (ema20 > ema50)
 
             if rsi < 40 and vol_ratio > 0.8 and trend_up:
                 sl = close_now*0.97
                 tp = close_now*1.15 if vol_ratio>2.5 else close_now*1.06
-                msg = f"🚀 TOKENTREK V2\n{instId} RSI {rsi:.2f} < 40 | Vol {vol_ratio:.1f}x Top40\nPrice: {close_now}\nTrend: EMA20>50 & Price>EMA200 ✅\nSL {sl:.5f} TP {tp:.5f}"
+                msg = f"🚀 TOKENTREK V2.1\n{instId} RSI {rsi:.2f} Vol {vol_ratio:.1f}x\nPrice: {close_now}\nTrend: OK ✅\nSL {sl:.6f} TP {tp:.6f}"
                 send_tg(msg)
                 sent_coins[coin]=time.time()
                 print(f"ALERT {coin} RSI {rsi:.1f}")
         except Exception as e:
-            print(e); continue
+            print(f"Err {instId}: {e}"); continue
 
 if __name__ == "__main__":
-    send_tg("✅ Tokentrek V2 FIXED - Port + Trend Filter + Cooldown LIVE")
+    send_tg("✅ Tokentrek V2.1 FIXED - Full 200 candles + trend - LIVE")
     while True:
         print(f"[{datetime.now()}] Scanning TOP40...")
         scan()
