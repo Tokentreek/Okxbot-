@@ -107,7 +107,7 @@ def scan():
             score = sum([c1_lb,c2_wide,c3_vol,c4_rsi,c5_macd,c6_low,c7_wick,c8_rsv,c9_down])
 
             # Need mandatory LB + VOL + 7/9 total
-                if c1_lb and score >= 7:
+            if c1_lb and score >= 7:
                 sl = lb * 0.96
                 dip = (close_now/mid-1)*100
                 msg = (f"Vik Long {coin}\n\n🎯 9-Cond Sniper - 1h BOTTOM\n"
