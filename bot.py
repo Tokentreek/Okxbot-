@@ -75,7 +75,6 @@ def scan():
     for t in top50:
         inst=t['instId']; coin=inst.split('-')[0]
         if coin in sent and time.time()-sent[coin]<3600*4: continue
-
         try:
             headers={"User-Agent":"Mozilla/5.0"}
             kl = requests.get(f"https://www.okx.com/api/v5/market/candles?instId={inst}&bar=1h&limit=100", headers=headers, timeout=10).json().get('data',[])
@@ -91,4 +90,52 @@ def scan():
             if None in (lb,k,d,mid): continue
 
             low_now=lows[-1]; close_now=closes[-1]; high_now=highs[-1]
-            vol_ratio = vols[-1]/(sum(vols[-21:-1])/20) if sum(vols
+            vol_avg = sum(vols[-21:-1])/20 if sum(vols[-21:-1])>0 else 1
+            vol_ratio = vols[-1]/vol_avg if vol_avg>0 else 0
+            bw = (ub-lb)/mid if mid else 0
+            ll = min(lows[-9:]); hh = max(highs[-9:])
+            rsv = (close_now-ll)/(hh-ll)*100 if hh!=ll else 50
+
+            c1_lb = low_now <= lb * 1.03
+            c2_wide = bw > 0.04
+            c3_vol = vol_ratio > 1.8
+            c4_rsi = r6_prev < 38 or r6 < 42
+            c5_macd = hist[-2] <= min(hist[-20:])*0.9
+            c6_low = close_now < mid * 0.97
+            c7_wick = (close_now - low_now) / (high_now - low_now + 1e-9) > 0.25
+            c8_rsv = rsv < 35
+            c9_down = close_now < closes[-6]
+
+            score = sum([c1_lb,c2_wide,c3_vol,c4_rsi,c5_macd,c6_low,c7_wick,c8_rsv,c9_down])
+
+            if c1_lb and score >= 7:
+                sl = lb * 0.96
+                dip = (close_now/mid-1)*100
+                msg = (f"Vik Long {coin}\n\n🎯 9-Cond Sniper - 1h BOTTOM\n"
+                       f"Coin: {coin} TF:1h Score:{score}/9\n"
+                       f"Entry: {close_now:.6f} Low: {low_now:.6f}\n"
+                       f"LB: {lb:.6f} MID: {mid:.6f} BW:{bw*100:.1f}%\n"
+                       f"Dip: {dip:.1f}% Vol:{vol_ratio:.1f}x\n"
+                       f"RSI6: {r6_prev:.0f}->{r6:.0f} RSV:{rsv:.0f} K:{k:.0f} D:{d:.0f}\n"
+                       f"MACD bottom: {c5_macd}\n"
+                       f"SL: {sl:.6f} TP MID: {mid:.6f}\n"
+                       f"{inst}")
+                send(msg)
+                sent[coin]=time.time()
+                found += 1
+        except: continue
+    return found
+
+if __name__=="__main__":
+    send("Vik Long Sniper 1h 9-COND LIVE ✅\nNow: LB + 7/9 (Vol optional)\nHeartbeat: Every 4hrs")
+    while True:
+        cnt = scan()
+        last_signals += cnt
+        if time.time() - last_heartbeat >= 14400:
+            if last_signals == 0:
+                send("💓 Bot Running - 4hr Update\nNo 7/9 setups found in last 4hrs\nScanned Top 80 OKX\nBot is LIVE ✅")
+            else:
+                send(f"💓 Bot Running - 4hr Update\nFound {last_signals} setups in last 4hrs\nScanned Top 80 OKX\nBot is LIVE ✅")
+            last_heartbeat = time.time()
+            last_signals = 0
+        time.sleep(60)
