@@ -1,30 +1,25 @@
-import requests, time, os
-import numpy as np
+import requests, time, os, numpy as np
 from flask import Flask
 import threading
-import logging
-
-logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
-@app.route('/')
-def home():
-    return "Long Sniper 1h 9-COND LIVE - Bot running", 200
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5042879835")
+PORT = int(os.getenv("PORT", 10000))
 sent = {}
-last_heartbeat = time.time()
-last_signals = 0
+last_heartbeat = 0
 
 def send(msg):
     try:
-        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                          json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=10)
-    except Exception as e:
-        print(f"tg error: {e}")
-    print(msg)
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                      json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=10)
+    except: pass
+    print(msg, flush=True)
+
+@app.route('/')
+def home():
+    return "Vik Long Sniper 1h 9-COND LIVE ✅ Render fix applied"
 
 def sma(arr,p): return sum(arr[-p:])/p if len(arr)>=p else None
 def bollinger(c,p=20,d=2):
@@ -64,23 +59,22 @@ def skdj(closes,highs,lows,n=9,m1=3,m2=3):
     return k,d
 
 def scan():
-    global last_signals
-    found = 0
+    global last_heartbeat
+    # 4h heartbeat
+    if time.time() - last_heartbeat > 14400:
+        send(f"Vik Long Sniper 1h LIVE heartbeat ✅\nNext scan running... {time.strftime('%H:%M EAT')}")
+        last_heartbeat = time.time()
     try:
         headers={"User-Agent":"Mozilla/5.0"}
         data = requests.get("https://www.okx.com/api/v5/market/tickers?instType=SWAP", headers=headers, timeout=10).json()['data']
-        top50 = sorted([x for x in data if 'USDT' in x['instId'] and float(x.get('vol24h',0)or 0)>100000],
+        top = sorted([x for x in data if 'USDT' in x['instId'] and float(x.get('vol24h',0)or 0)>100000],
                        key=lambda x: float(x.get('vol24h',0)or 0), reverse=True)[:80]
-    except Exception as e:
-        print(f"OKX ticker error: {e}")
-        return 0
-
-    for t in top50:
+    except: return
+    for t in top:
         inst=t['instId']; coin=inst.split('-')[0]
-        if coin in sent and time.time()-sent[coin]<3600*4: continue
+        if coin in sent and time.time()-sent[coin]<14400: continue
         try:
-            headers={"User-Agent":"Mozilla/5.0"}
-            kl = requests.get(f"https://www.okx.com/api/v5/market/candles?instId={inst}&bar=1h&limit=100", headers=headers, timeout=10).json().get('data',[])
+            kl = requests.get(f"https://www.okx.com/api/v5/market/candles?instId={inst}&bar=1h&limit=100", headers={"User-Agent":"Mozilla/5.0"}, timeout=10).json().get('data',[])
             if len(kl)<50: continue
             kl.reverse()
             closes=[float(c[4]) for c in kl]; highs=[float(c[2]) for c in kl]; lows=[float(c[3]) for c in kl]; vols=[float(c[5]) for c in kl]
@@ -90,8 +84,7 @@ def scan():
             hist = macd_hist(closes)
             if None in (lb,k,d,mid): continue
             low_now=lows[-1]; close_now=closes[-1]; high_now=highs[-1]
-            vol_avg = sum(vols[-21:-1])/20 if sum(vols[-21:-1])>0 else 1
-            vol_ratio = vols[-1]/vol_avg if vol_avg>0 else 0
+            vol_ratio = vols[-1]/(sum(vols[-21:-1])/20) if sum(vols[-21:-1])>0 else 0
             bw = (ub-lb)/mid if mid else 0
             ll = min(lows[-9:]); hh = max(highs[-9:])
             rsv = (close_now-ll)/(hh-ll)*100 if hh!=ll else 50
@@ -114,37 +107,21 @@ def scan():
                        f"LB: {lb:.6f} MID: {mid:.6f} BW:{bw*100:.1f}%\n"
                        f"Dip: {dip:.1f}% Vol:{vol_ratio:.1f}x\n"
                        f"RSI6: {r6_prev:.0f}->{r6:.0f} RSV:{rsv:.0f} K:{k:.0f} D:{d:.0f}\n"
-                       f"MACD bottom: {c5_macd}\n"
-                       f"SL: {sl:.6f} TP MID: {mid:.6f}\n"
-                       f"{inst}")
+                       f"SL: {sl:.6f} TP MID: {mid:.6f}\n{inst}")
                 send(msg)
                 sent[coin]=time.time()
-                found += 1
         except: continue
-    return found
 
 def bot_loop():
-    global last_heartbeat, last_signals
-    time.sleep(5)
-    send("Vik Long Sniper 1h 9-COND LIVE ✅\nNow: LB + 7/9 (Vol optional)\nHeartbeat: Every 4hrs\nRender fix applied")
+    send("Vik Long Sniper 1h 9-COND LIVE ✅\nRender fix applied - LB mandatory, 7/9 needed")
+    global last_heartbeat
+    last_heartbeat = time.time()
     while True:
-        try:
-            cnt = scan()
-            last_signals += cnt
-            if time.time() - last_heartbeat >= 14400:
-                if last_signals == 0:
-                    send("💓 Bot Running - 4hr Update\nNo 7/9 setups found in last 4hrs\nScanned Top 80 OKX\nBot is LIVE ✅")
-                else:
-                    send(f"💓 Bot Running - 4hr Update\nFound {last_signals} setups in last 4hrs\nScanned Top 80 OKX\nBot is LIVE ✅")
-                last_heartbeat = time.time()
-                last_signals = 0
-        except Exception as e:
-            print(f"loop error: {e}")
+        scan()
         time.sleep(60)
 
-# THIS IS THE FIX - Start loop when gunicorn loads app
+# START BOT EVEN WHEN GUNICORN RUNS IT
 threading.Thread(target=bot_loop, daemon=True).start()
 
 if __name__=="__main__":
-    # For local testing only
-    app.run(host='0.0.0.0', port=10000)
+    app.run(host='0.0.0.0', port=PORT)
