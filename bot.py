@@ -11,6 +11,9 @@ PORT = int(os.getenv("PORT", 10000))
 sent = {}
 last_heartbeat = 0
 
+# PRIORITY COINS WITH NEWS TODAY
+PRIORITY = ["DATA", "STRK", "GRASS", "NEAR", "SOL", "BUNKER", "MAGIC", "SUI", "WALRUS"]
+
 def send(msg):
     try:
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
@@ -21,7 +24,7 @@ def send(msg):
 
 @app.route('/')
 def home():
-    return "Vik Long Sniper 1h LIVE 5/9 ENTRY ✅"
+    return "Vik Long Sniper PRIORITY 4/9 LIVE ✅"
 
 def sma(arr,p):
     return sum(arr[-p:])/p if len(arr)>=p else None
@@ -82,73 +85,94 @@ def skdj(closes,highs,lows,n=9,m1=3,m2=3):
     d=sma(ks,m2) if len(ks)>=m2 else None
     return k,d
 
+def analyze_coin(inst, coin, is_priority=False):
+    try:
+        kl = requests.get(f"https://www.okx.com/api/v5/market/candles?instId={inst}&bar=1h&limit=100", headers={"User-Agent":"Mozilla/5.0"}, timeout=10).json().get('data',[])
+        if len(kl)<50:
+            return 0
+        kl.reverse()
+        closes = [float(c[4]) for c in kl]
+        highs = [float(c[2]) for c in kl]
+        lows = [float(c[3]) for c in kl]
+        vols = [float(c[5]) for c in kl]
+
+        ub,mid,lb = bollinger(closes,20,2)
+        r6 = rsi(closes,6)
+        r6_prev = rsi(closes[:-1],6)
+        k,d = skdj(closes,highs,lows,9,3,3)
+        hist = macd_hist(closes)
+        if None in (lb,k,d,mid):
+            return 0
+
+        low_now=lows[-1]
+        close_now=closes[-1]
+        high_now=highs[-1]
+        vol_ratio = vols[-1]/(sum(vols[-21:-1])/20) if sum(vols[-21:-1])>0 else 0
+        bw = (ub-lb)/mid if mid else 0
+        ll = min(lows[-9:])
+        hh = max(highs[-9:])
+        rsv = (close_now-ll)/(hh-ll)*100 if hh!=ll else 50
+
+        # LOWERED CONDITIONS FOR TODAY
+        c1_lb = low_now <= lb * 1.05 # was 1.03, now looser
+        c2_wide = bw > 0.02 # was 0.04
+        c3_vol = vol_ratio > 1.2 if is_priority else vol_ratio > 1.5 # was 1.8
+        c4_rsi = r6_prev < 45 or r6 < 50 # was 38/42
+        c5_macd = hist[-1] > hist[-2] or hist[-2] <= min(hist[-20:])*0.95 # bottom or turning
+        c6_low = close_now < mid * 0.99 # was 0.97
+        c7_wick = (close_now - low_now) / (high_now - low_now + 1e-9) > 0.15 # was 0.25
+        c8_rsv = rsv < 50 # was 35
+        c9_down = close_now < closes[-3] # was -6, now looser
+
+        score = sum([c1_lb,c2_wide,c3_vol,c4_rsi,c5_macd,c6_low,c7_wick,c8_rsv,c9_down])
+        return score, (close_now, low_now, lb, mid, bw, vol_ratio, r6, r6_prev, rsv, k, d, closes, mid)
+
+    except Exception as e:
+        print(f"{inst} err {e}", flush=True)
+        return 0, None
+
 def scan():
     global last_heartbeat
     if time.time() - last_heartbeat > 1800:
-        send(f"Vik LIVE heartbeat ✅ {time.strftime('%H:%M EAT')} 5/9 mode")
+        send(f"Vik PRIORITY LIVE ✅ 4/9 MODE - Scanning {len(PRIORITY)} priority coins\n{time.strftime('%H:%M EAT')}")
         last_heartbeat = time.time()
     try:
         headers={"User-Agent":"Mozilla/5.0"}
         data = requests.get("https://www.okx.com/api/v5/market/tickers?instType=SWAP", headers=headers, timeout=10).json()['data']
-        top = sorted([x for x in data if 'USDT' in x['instId'] and float(x.get('vol24h',0)or 0)>50000],
-                       key=lambda x: float(x.get('vol24h',0)or 0), reverse=True)[:80]
+        # Lower volume for priority day
+        all_coins = [x for x in data if 'USDT' in x['instId']]
+        top = sorted([x for x in all_coins if float(x.get('vol24h',0)or 0)>20000],
+                       key=lambda x: float(x.get('vol24h',0)or 0), reverse=True)[:100]
         print(f"--- SCAN {time.strftime('%H:%M:%S')} {len(top)} coins ---", flush=True)
     except Exception as e:
         print(f"Tickers error: {e}", flush=True)
         return
 
-    best_score=0
-    best_coin=""
-    for t in top:
-        inst=t['instId']
-        coin=inst.split('-')[0]
-        if coin in sent and time.time()-sent[coin]<14400:
-            continue
+    # 1. SCAN PRIORITY FIRST
+    for coin_name in PRIORITY:
         try:
-            kl = requests.get(f"https://www.okx.com/api/v5/market/candles?instId={inst}&bar=1h&limit=100", headers={"User-Agent":"Mozilla/5.0"}, timeout=10).json().get('data',[])
-            if len(kl)<50:
+            match = next((x for x in top if coin_name in x['instId'].split('-')[0]), None)
+            if not match:
+                # try find directly
+                match = next((x for x in all_coins if coin_name == x['instId'].split('-')[0]), None)
+            if not match:
                 continue
-            kl.reverse()
-            closes = [float(c[4]) for c in kl]
-            highs = [float(c[2]) for c in kl]
-            lows = [float(c[3]) for c in kl]
-            vols = [float(c[5]) for c in kl]
-
-            ub,mid,lb = bollinger(closes,20,2)
-            r6 = rsi(closes,6)
-            r6_prev = rsi(closes[:-1],6)
-            k,d = skdj(closes,highs,lows,9,3,3)
-            hist = macd_hist(closes)
-            if None in (lb,k,d,mid):
+            inst = match['instId']
+            coin = inst.split('-')[0]
+            if coin in sent and time.time()-sent[coin]<7200: # 2h cooldown for priority
                 continue
-            low_now=lows[-1]
-            close_now=closes[-1]
-            high_now=highs[-1]
-            vol_ratio = vols[-1]/(sum(vols[-21:-1])/20) if sum(vols[-21:-1])>0 else 0
-            bw = (ub-lb)/mid if mid else 0
-            ll = min(lows[-9:])
-            hh = max(highs[-9:])
-            rsv = (close_now-ll)/(hh-ll)*100 if hh!=ll else 50
-            c1_lb = low_now <= lb * 1.03
-            c2_wide = bw > 0.04
-            c3_vol = vol_ratio > 1.8
-            c4_rsi = r6_prev < 38 or r6 < 42
-            c5_macd = hist[-2] <= min(hist[-20:])*0.9
-            c6_low = close_now < mid * 0.97
-            c7_wick = (close_now - low_now) / (high_now - low_now + 1e-9) > 0.25
-            c8_rsv = rsv < 35
-            c9_down = close_now < closes[-6]
-            score = sum([c1_lb,c2_wide,c3_vol,c4_rsi,c5_macd,c6_low,c7_wick,c8_rsv,c9_down])
+            result = analyze_coin(inst, coin, is_priority=True)
+            if result == 0:
+                continue
+            score, vals = result
+            close_now, low_now, lb, mid, bw, vol_ratio, r6, r6_prev, rsv, k, d, closes, mid_v = vals
 
-            if score > best_score:
-                best_score=score
-                best_coin=coin
-
-            if c1_lb and score >= 5:
-                sl = lb * 0.96
+            # PRIORITY ENTRY 4/9 with LB
+            if score >= 4 and low_now <= lb * 1.05:
+                sl = lb * 0.94
                 dip = (close_now/mid-1)*100
-                msg = (f"Vik Long {coin} 🎯\n\n9-Cond 1h BOTTOM Score {score}/9\n"
-                       f"Coin: {coin} TF:1h\n"
+                msg = (f"🔥 PRIORITY {coin} 🎯\n\nNEWS COIN Score {score}/9\n"
+                       f"Coin: {coin} TF:1h PRIORITY\n"
                        f"Entry: {close_now:.6f} Low: {low_now:.6f}\n"
                        f"LB: {lb:.6f} MID: {mid:.6f} BW:{bw*100:.1f}%\n"
                        f"Dip: {dip:.1f}% Vol:{vol_ratio:.1f}x\n"
@@ -156,20 +180,29 @@ def scan():
                        f"SL: {sl:.6f} TP MID: {mid:.6f}\n{inst}")
                 send(msg)
                 sent[coin]=time.time()
-        except Exception as e:
-            print(f"{inst} err {e}", flush=True)
+        except:
             continue
-    print(f"Scan done. Best: {best_coin} {best_score}/9", flush=True)
 
-def bot_loop():
-    send("Vik Long Sniper 1h LIVE ✅ 5/9 ENTRY MODE")
-    global last_heartbeat
-    last_heartbeat=time.time()
-    while True:
-        scan()
-        time.sleep(60)
-
-threading.Thread(target=bot_loop, daemon=True).start()
-
-if __name__=="__main__":
-    app.run(host='0.0.0.0', port=PORT)
+    # 2. SCAN REST WITH 5/9
+    best_score=0
+    best_coin=""
+    for t in top:
+        inst=t['instId']
+        coin=inst.split('-')[0]
+        if coin in PRIORITY:
+            continue
+        if coin in sent and time.time()-sent[coin]<14400:
+            continue
+        try:
+            result = analyze_coin(inst, coin, is_priority=False)
+            if result == 0:
+                continue
+            score, vals = result
+            if score > best_score:
+                best_score=score
+                best_coin=coin
+            if score >=5:
+                close_now, low_now, lb, mid, bw, vol_ratio, r6, r6_prev, rsv, k, d, closes, mid_v = vals
+                if low_now <= lb * 1.05:
+                    sl = lb * 0.96
+                    dip = (close_now/m
