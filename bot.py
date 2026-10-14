@@ -7,10 +7,22 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5042879835")
 PORT = int(os.getenv("PORT", 10000))
+BAR = os.getenv("BAR", "15m") # now 15m LB sniper
 sent = {}
 last_heartbeat = 0
 
-PRIORITY = ["DATA-USDT-SWAP", "SUI-USDT-SWAP", "SOL-USDT-SWAP", "NEAR-USDT-SWAP", "STRK-USDT-SWAP"]
+# YOUR WATCHLIST FROM SCREENSHOT + PRIORITY
+PRIORITY = [
+    "WAL-USDT-SWAP",
+    "PYTH-USDT-SWAP",
+    "GRASS-USDT-SWAP",
+    "PUMP-USDT-SWAP",
+    "DATA-USDT-SWAP",
+    "SUI-USDT-SWAP",
+    "SOL-USDT-SWAP",
+    "NEAR-USDT-SWAP",
+    "BTC-USDT-SWAP"
+]
 
 def send(msg):
     try:
@@ -22,7 +34,7 @@ def send(msg):
 
 @app.route('/')
 def home():
-    return "Vik Long Sniper 5/9 DUMP HUNTER LIVE"
+    return f"Vik Long Sniper 5/9 DUMP HUNTER LIVE - {BAR} LB"
 
 def sma(arr,p):
     return sum(arr[-p:])/p if len(arr)>=p else None
@@ -78,20 +90,31 @@ def skdj(closes,highs,lows,n=9,m1=3,m2=3):
             hh=max(highs[i-n+1:i+1])
             ll=min(lows[i-n+1:i+1])
             rsvs.append(50 if hh==ll else (closes[i]-ll)/(hh-ll)*100)
-    k=sma(rsvs,m1)
-    ks=[sma(rsvs[i-m1+1:i+1],m1) for i in range(m1-1,len(rsvs))]
-    d=sma(ks,m2) if len(ks)>=m2 else None
+    k_vals=[]
+    for i in range(len(rsvs)):
+        if i < m1-1:
+            k_vals.append(50)
+        else:
+            k_vals.append(sma(rsvs[i-m1+1:i+1],m1))
+    d_vals=[]
+    for i in range(len(k_vals)):
+        if i < m2-1:
+            d_vals.append(50)
+        else:
+            d_vals.append(sma(k_vals[i-m2+1:i+1],m2))
+    k = k_vals[-1] if k_vals else 50
+    d = d_vals[-1] if d_vals else 50
     return k,d
 
 def scan():
     global last_heartbeat
     if time.time() - last_heartbeat > 14400:
-        send(f"Vik 5/9 Dump Hunter LIVE heartbeat {time.strftime('%H:%M EAT')}")
+        send(f"Vik 5/9 Dump Hunter LIVE {BAR} heartbeat {time.strftime('%H:%M EAT')}")
         last_heartbeat = time.time()
     try:
         headers={"User-Agent":"Mozilla/5.0"}
         data = requests.get("https://www.okx.com/api/v5/market/tickers?instType=SWAP", headers=headers, timeout=10).json()['data']
-        top80 = sorted([x for x in data if 'USDT' in x['instId'] and float(x.get('vol24h',0)or 0)>100000],
+        top80 = sorted([x for x in data if 'USDT' in x['instId'] and float(x.get('vol24h',0)or 0)>50000],
                        key=lambda x: float(x.get('vol24h',0)or 0), reverse=True)[:80]
         top_ids = [x['instId'] for x in top80]
         scan_list = PRIORITY + top_ids
@@ -104,7 +127,7 @@ def scan():
         if coin in sent and time.time()-sent[coin]<1800:
             continue
         try:
-            kl = requests.get(f"https://www.okx.com/api/v5/market/candles?instId={inst}&bar=1h&limit=100", headers={"User-Agent":"Mozilla/5.0"}, timeout=10).json().get('data',[])
+            kl = requests.get(f"https://www.okx.com/api/v5/market/candles?instId={inst}&bar={BAR}&limit=100", headers={"User-Agent":"Mozilla/5.0"}, timeout=10).json().get('data',[])
             if len(kl)<50:
                 continue
             kl.reverse()
@@ -128,24 +151,23 @@ def scan():
             hh = max(highs[-9:])
             rsv = (close_now-ll)/(hh-ll)*100 if hh!=ll else 50
 
-            c1_lb = low_now <= lb * 1.05
-            c2_wide = bw > 0.04
-            c3_vol = vol_ratio > 1.2
+            c1_lb = low_now <= lb * 1.03 # tighter for 15m
+            c2_wide = bw > 0.025 # 2.5% for 15m (was 4% for 1h)
+            c3_vol = vol_ratio > 1.15
             c4_rsi = r6_prev < 45 or r6 < 50
             c5_macd = hist[-2] <= min(hist[-20:])*0.8
-            c6_low = close_now < mid * 0.99
-            c7_wick = (close_now - low_now) / (high_now - low_now + 1e-9) > 0.20
+            c6_low = close_now < mid * 0.995
+            c7_wick = (close_now - low_now) / (high_now - low_now + 1e-9) > 0.15
             c8_rsv = rsv < 45
             c9_down = close_now < closes[-4]
             score = sum([c1_lb,c2_wide,c3_vol,c4_rsi,c5_macd,c6_low,c7_wick,c8_rsv,c9_down])
 
             if c1_lb and score >= 5:
-                sl = lb * 0.96
+                sl = lb * 0.985 # tighter SL for $11 account 1.5%
                 dip = (close_now/mid-1)*100
-                # FIXED - NO % INSIDE {} TO AVOID SYNTAX ERROR
                 msg = (
-                    f"DUMP ALERT {coin} S{score}/9\n"
-                    f"Coin: {coin} TF:1h\n"
+                    f"DUMP ALERT {coin} S{score}/9 {BAR}\n"
+                    f"Coin: {coin} TF:{BAR}\n"
                     f"Now: {close_now:.6f} Low: {low_now:.6f}\n"
                     f"LB: {lb:.6f} MID: {mid:.6f} UB: {ub:.6f}\n"
                     f"Dip: {dip:.1f} pct Vol: {vol_ratio:.1f}x BW: {bw*100:.1f} pct\n"
@@ -155,18 +177,4 @@ def scan():
                 )
                 send(msg)
                 sent[coin]=time.time()
-        except:
-            continue
-
-def bot_loop():
-    send("Vik 5/9 Dump Hunter LIVE - LB x1.05 + Score 5/9 - Priority DATA SUI SOL")
-    global last_heartbeat
-    last_heartbeat = time.time()
-    while True:
-        scan()
-        time.sleep(30)
-
-threading.Thread(target=bot_loop, daemon=True).start()
-
-if __name__=="__main__":
-    app.run(host='0.0.0.0', port=PORT)
+        except Exception
