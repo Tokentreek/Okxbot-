@@ -1,6 +1,6 @@
-import requests, time, os
+import requests, time, os, math
 from flask import Flask
-import threading, math
+import threading
 
 app = Flask(__name__)
 
@@ -11,7 +11,7 @@ BAR = "15m"
 sent = {}
 last_hb = 0
 
-PRIORITY = ["WAL-USDT-SWAP","PYTH-USDT-SWAP","GRASS-USDT-SWAP","PUMP-USDT-SWAP","DATA-USDT-SWAP","SUI-USDT-SWAP","SOL-USDT-SWAP","NEAR-USDT-SWAP"]
+PRIORITY = ["WAL-USDT-SWAP","PYTH-USDT-SWAP","GRASS-USDT-SWAP","PUMP-USDT-SWAP","SUI-USDT-SWAP","SOL-USDT-SWAP","BTC-USDT-SWAP"]
 
 def send(m):
     try:
@@ -23,97 +23,94 @@ def send(m):
 
 @app.route('/')
 def home():
-    return f"LIVE {BAR} OK"
+    return "STRICT RSI<45 FIXED"
 
 def sma(a,p):
-    if len(a)<p:
-        return None
+    if len(a)<p: return None
     return sum(a[-p:])/p
 
 def boll(c,p=20,d=2):
-    if len(c)<p:
-        return None,None,None
+    if len(c)<p: return None,None,None
     m=sma(c,p)
-    if m is None:
-        return None,None,None
     var=sum((x-m)**2 for x in c[-p:])/p
     s=math.sqrt(var)
     return m+d*s, m, m-d*s
 
 def rsi(prices,p=6):
-    if len(prices)<p+1:
-        return 50
-    g=0
-    l=0
+    if len(prices)<p+1: return 50
+    g=l=0
     for i in range(1,p+1):
         dlt=prices[-i]-prices[-i-1]
-        if dlt>0:
-            g+=dlt
-        else:
-            l+=abs(dlt)
-    if l==0:
-        return 100
+        if dlt>0: g+=dlt
+        else: l+=abs(dlt)
+    if l==0: return 100
     rs=(g/p)/(l/p)
     return 100-(100/(1+rs))
 
 def scan():
-    global last_hb
-    if time.time()-last_hb>14400:
-        send(f"HB {BAR} {time.strftime('%H:%M')}")
-        last_hb=time.time()
     try:
         headers={"User-Agent":"Mozilla/5.0"}
         data=requests.get("https://www.okx.com/api/v5/market/tickers?instType=SWAP",headers=headers,timeout=10).json().get('data',[])
-        top=sorted([x for x in data if 'USDT' in x['instId'] and float(x.get('vol24h',0)or 0)>50000], key=lambda x: float(x.get('vol24h',0)or 0), reverse=True)[:80]
-        ids=[x['instId'] for x in top]
-        scan_list=PRIORITY+ids
+        top=sorted([x for x in data if 'USDT' in x['instId'] and float(x.get('vol24h',0)or 0)>150000], key=lambda x: float(x.get('vol24h',0)or 0), reverse=True)[:60]
+        scan_list=PRIORITY+[x['instId'] for x in top]
         scan_list=list(dict.fromkeys(scan_list))
     except:
         return
     for inst in scan_list:
         coin=inst.split('-')[0]
-        if coin in sent and time.time()-sent[coin]<1800:
+        if coin in sent and time.time()-sent[coin]<3600: # 1 hour cooldown - NO SPAM
             continue
         try:
-            kl=requests.get(f"https://www.okx.com/api/v5/market/candles?instId={inst}&bar={BAR}&limit=100",headers={"User-Agent":"Mozilla/5.0"},timeout=10).json().get('data',[])
-            if len(kl)<50:
-                continue
+            kl=requests.get(f"https://www.okx.com/api/v5/market/candles?instId={inst}&bar={BAR}&limit=80",headers={"User-Agent":"Mozilla/5.0"},timeout=10).json().get('data',[])
+            if len(kl)<50: continue
             kl.reverse()
             closes=[float(c[4]) for c in kl]
             lows=[float(c[3]) for c in kl]
             highs=[float(c[2]) for c in kl]
             vols=[float(c[5]) for c in kl]
             ub,mid,lb=boll(closes,20,2)
-            if lb is None:
-                continue
+            if lb is None: continue
+
             r6=rsi(closes,6)
             r6p=rsi(closes[:-1],6)
-            low_now=lows[-1]
-            close_now=closes[-1]
             vol_ratio=vols[-1]/(sum(vols[-21:-1])/20) if sum(vols[-21:-1])>0 else 0
             bw=(ub-lb)/mid if mid else 0
-            c1=low_now<=lb*1.03
-            c2=bw>0.025
-            c3=vol_ratio>1.15
-            c4=r6p<45 or r6<50
-            c5=close_now<mid*0.995
-            score=sum([c1,c2,c3,c4,c5])
-            if c1 and score>=3:
-                sl=lb*0.985
-                dip=(close_now/mid-1)*100
-                msg=f"DUMP {coin} S{score}/5 {BAR} Now:{close_now:.5f} LB:{lb:.5f} MID:{mid:.5f} Dip:{dip:.1f}% Vol:{vol_ratio:.1f}x RSI:{r6:.0f} SL:{sl:.5f} {inst}"
-                send(msg)
-                sent[coin]=time.time()
+            low_now=lows[-1]
+            close_now=closes[-1]
+
+            # HARD FILTERS - WILL BLOCK RSI 86
+            if r6>55: continue # BLOCK overbought - fixes your RSI 86 bug
+            if r6p>60: continue
+            if vol_ratio<1.3: continue # BLOCK low volume
+            if bw<0.03: continue # BLOCK tight bands
+            if low_now>lb*1.02: continue # MUST touch LB
+
+            # If passes all hard filters, then it's REAL dump
+            rsv_min=min(lows[-9:])
+            rsv_max=max(highs[-9:])
+            rsv=(close_now-rsv_min)/(rsv_max-rsv_min)*100 if rsv_max!=rsv_min else 50
+            if rsv>40: continue
+
+            dip=(close_now/mid-1)*100
+            sl=lb*0.985
+            msg=(
+                f"REAL DUMP {coin} {BAR}\n"
+                f"RSI:{r6:.0f}->{r6p:.0f} MUST BE <45\n"
+                f"Now:{close_now:.5f} LB:{lb:.5f} MID:{mid:.5f}\n"
+                f"Dip:{dip:.1f}% Vol:{vol_ratio:.1f}x BW:{bw*100:.1f}% RSV:{rsv:.0f}\n"
+                f"SL:{sl:.5f} TP:{mid:.5f}\n"
+                f"{inst}"
+            )
+            send(msg)
+            sent[coin]=time.time()
         except:
             continue
 
 def loop():
-    send(f"LIVE {BAR} START")
-    global last_hb
-    last_hb=time.time()
+    send("FIXED BOT START - RSI>55 BLOCKED - No more RSI 86 spam")
     while True:
         scan()
-        time.sleep(30)
+        time.sleep(60)
 
 threading.Thread(target=loop,daemon=True).start()
 
