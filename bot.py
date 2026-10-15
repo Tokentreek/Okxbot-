@@ -12,37 +12,22 @@ sent = {}
 last_hb = 0
 GATE_HOST = "https://api.gateio.ws"
 
-# V10 FULL NEWS PRIORITY
 PRIORITY = [
-    "SUI_USDT",
-    "WAL_USDT",
-    "DATA_USDT",
-    "IP_USDT",
-    "ARB_USDT",
-    "STRK_USDT",
-    "CRO_USDT",
-    "DBR_USDT",
-    "SEI_USDT",
-    "APT_USDT",
-    "OKB_USDT",
-    "RENDER_USDT",
-    "BTC_USDT",
-    "ETH_USDT",
-    "SOL_USDT",
-    "HOOKED_USDT",
+    "SUI_USDT","WAL_USDT","DATA_USDT","IP_USDT",
+    "ARB_USDT","STRK_USDT","CRO_USDT","DBR_USDT",
+    "SEI_USDT","APT_USDT","OKB_USDT","RENDER_USDT",
+    "BTC_USDT","ETH_USDT","SOL_USDT","HOOKED_USDT",
 ]
 
 def send(m):
     try:
         if TOKEN:
             requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={"chat_id": CHAT, "text": m}, timeout=10)
-    except:
-        pass
+    except: pass
     print(m, flush=True)
 
 @app.route('/')
-def home():
-    return "V10 GATE NEWS FULL - SUI $30M DATA ARB STRK CRO OKX"
+def home(): return "V10.1 GATE NEWS FIXED"
 
 def sma(a,p):
     if len(a)<p: return None
@@ -102,9 +87,7 @@ def get_candles(contract):
 
 def scan():
     global last_hb
-    checked=0
-    bounced=0
-    last_info="none"
+    checked=0; bounced=0; last_info="none"
     scan_list=get_movers()
     for contract in scan_list:
         coin=contract.split('_')[0]
@@ -117,25 +100,45 @@ def scan():
             ub,mid,lb=boll(closes,20,2)
             if lb is None: continue
             checked+=1
-            r6=rsi(closes,6)
-            r6p=rsi(closes[:-1],6)
+            r6=rsi(closes,6); r6p=rsi(closes[:-1],6)
             vol_ratio=vols[-1]/(sum(vols[-21:-1])/20) if sum(vols[-21:-1])>0 else 0
             bw=(ub-lb)/mid if mid else 0
-            low_now=lows[-1]
-            close_now=closes[-1]
+            low_now=lows[-1]; close_now=closes[-1]
             last_info=f"{coin} {close_now:.5f}"
             if r6>55: continue
             if r6p>60: continue
             if vol_ratio<1.1: continue
             if bw<0.03: continue
             if low_now>lb*1.02: continue
-            rsv_min=min(lows[-9:])
-            rsv_max=max(highs[-9:])
+            rsv_min=min(lows[-9:]); rsv_max=max(highs[-9:])
             rsv=(close_now-rsv_min)/(rsv_max-rsv_min)*100 if rsv_max!=rsv_min else 50
             if rsv>50: continue
-            dip=(close_now/mid-1)*100
-            sl=lb*0.985
+            dip=(close_now/mid-1)*100; sl=lb*0.985
             tag="NEWS"
-            if coin in ["SUI","WAL","DATA","IP"]: tag="SUI $30M DATA"
-            elif coin in ["ARB","STRK","CRO","DBR"]: tag="UNLOCK"
-            elif coin in ["OKB"]: tag
+            if coin in ["SUI","WAL","DATA","IP"]:
+                tag="SUI $30M DATA"
+            elif coin in ["ARB","STRK","CRO","DBR"]:
+                tag="UNLOCK"
+            elif coin=="OKB":
+                tag="OKX $25B"
+            msg=f"GATE {tag} {coin} {BAR} RSI:{r6:.0f}->{r6p:.0f} LB:{lb:.5f} Now:{close_now:.5f} MID:{mid:.5f} Dip:{dip:.1f}% Vol:{vol_ratio:.1f}x RSV:{rsv:.0f} SL:{sl:.5f} TP:{mid:.5f} {contract}"
+            send(msg); sent[coin]=time.time(); bounced+=1
+        except Exception as e:
+            print(f"ERR {contract} {e}", flush=True); continue
+    print(f"[SCAN] {checked} checked - {bounced} bounces - {last_info}", flush=True)
+    if time.time()-last_hb>900:
+        try:
+            send(f"GATE NEWS SCAN OK {checked} coins {bounced} bounces Focus SUI DATA $30M ARB OCT16 STRK TODAY - {last_info}")
+            last_hb=time.time()
+        except: pass
+
+def loop():
+    send("V10.1 GATE NEWS FIXED - SUI $30M DATA + ARB OCT16 + STRK TODAY + OKX $25B")
+    global last_hb; last_hb=time.time()
+    while True:
+        try: scan()
+        except Exception as e: print(f"LOOP ERR {e}", flush=True)
+        time.sleep(60)
+
+threading.Thread(target=loop,daemon=True).start()
+if __name__=="__main__": app.run(host='0.0.0.0',port=PORT)
